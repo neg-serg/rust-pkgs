@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# One run per ref: a new push supersedes the previous build.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  cargo:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      # One loop instead of a matrix: the crates share no workspace on purpose
+      # (27 independent lockfiles), so each manifest is checked on its own.
+      - name: Format
+        run: |
+          for manifest in */Cargo.toml; do
+            echo "== $manifest"
+            cargo fmt --check --manifest-path "$manifest"
+          done
+
+      - name: Clippy
+        run: |
+          for manifest in */Cargo.toml; do
+            echo "== $manifest"
+            cargo clippy --manifest-path "$manifest" --all-targets
+          done
+
+  nix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+
+      # Every crate in one store path; `checks.build` is the same output.
+      - name: Build with Nix
+        run: nix build -L .#all
+
+      - name: Flake check
+        run: nix flake check -L
